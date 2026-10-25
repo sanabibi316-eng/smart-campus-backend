@@ -9,25 +9,24 @@ module.exports = async (req, res) => {
     req.url = originalUrl.replace(/^\/api\/index\.js/, '') || '/';
   }
 
-  // Connect to database for routes requiring it
+  // Ensure DB is connected BEFORE passing to express routes (except public health)
+  const isHealthCheck = req.url === '/' || req.url === '/api/v1/health';
+
   try {
-    if (process.env.MONGODB_URI) {
-      await connectDB();
-    }
+    await connectDB();
   } catch (error) {
     console.error('Database connection error in serverless function:', error);
-    // If it's a health check, allow it through with warning
-    if (req.url.includes('/health')) {
+    if (isHealthCheck) {
       return res.status(200).json({
         success: true,
-        message: 'Smart Campus API is running (Database connection pending)',
-        database: 'disconnected',
+        message: 'Smart Campus API is running, but database connection is pending.',
+        databaseStatus: 'disconnected',
         error: error.message,
       });
     }
-    return res.status(500).json({
+    return res.status(503).json({
       success: false,
-      message: 'Database connection failed. Please ensure MONGODB_URI is configured in Vercel project Environment Variables and MongoDB Atlas allows 0.0.0.0/0.',
+      message: 'Database connection failed. Please ensure MONGODB_URI is added in Vercel Environment Variables and MongoDB Atlas Network Access has 0.0.0.0/0 enabled.',
       error: error.message,
     });
   }
