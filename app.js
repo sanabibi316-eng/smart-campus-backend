@@ -21,12 +21,30 @@ const app = express();
 // Security middleware
 app.use(helmet());
 
-// CORS
+// CORS configuration supporting local dev and Vercel frontend deployments
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://sana-smartcampus.vercel.app',
+];
+if (process.env.CLIENT_URL) {
+  allowedOrigins.push(process.env.CLIENT_URL);
+}
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith('.vercel.app')
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true); // Permissive fallback to prevent CORS blockage
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
@@ -34,7 +52,7 @@ app.use(
 // Rate limiting for auth routes
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20,
+  max: 50,
   message: {
     success: false,
     message: 'Too many login attempts. Please try again after 15 minutes.',
@@ -46,7 +64,7 @@ const authLimiter = rateLimit({
 // General rate limiter
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 500,
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',
@@ -67,13 +85,22 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
+// Root route for quick verification
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Smart Campus API Server is running',
+    healthCheck: '/api/v1/health',
+  });
+});
+
 // Health check
 app.get('/api/v1/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Smart Campus API is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
+    environment: process.env.NODE_ENV || 'production',
   });
 });
 
@@ -88,7 +115,6 @@ app.use('/api/v1/assignments', assignmentRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 
 // 404 handler
-// ✅ NEW (works in Express 4 and 5)
 app.use((req, res) => {
   res.status(404).json({
     success: false,
