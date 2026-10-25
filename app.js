@@ -4,7 +4,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
+const mongoose = require('mongoose');
 const errorHandler = require('./middleware/errorHandler');
+const connectDB = require('./config/db');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -33,7 +35,6 @@ if (process.env.CLIENT_URL) {
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, Postman)
       if (!origin) return callback(null, true);
       if (
         allowedOrigins.includes(origin) ||
@@ -41,25 +42,13 @@ app.use(
       ) {
         return callback(null, true);
       }
-      return callback(null, true); // Permissive fallback to prevent CORS blockage
+      return callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
-
-// Rate limiting for auth routes
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50,
-  message: {
-    success: false,
-    message: 'Too many login attempts. Please try again after 15 minutes.',
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
 
 // General rate limiter
 const generalLimiter = rateLimit({
@@ -80,10 +69,25 @@ app.use(express.urlencoded({ extended: true }));
 // Cookie parser
 app.use(cookieParser());
 
-// Logging in development
-if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
-}
+// Database connection middleware for every incoming API request
+app.use(async (req, res, next) => {
+  // Allow simple root/health checks without blocking
+  if (req.path === '/' || req.path === '/api/v1/health') {
+    return next();
+  }
+
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error('Database connection error in request middleware:', error.message);
+    return res.status(503).json({
+      success: false,
+      message: 'Database connection failed. Please ensure MONGODB_URI is configured correctly in Vercel settings and 0.0.0.0/0 is whitelisted in MongoDB Atlas.',
+      error: error.message,
+    });
+  }
+});
 
 // Root route for quick verification
 app.get('/', (req, res) => {
@@ -91,21 +95,23 @@ app.get('/', (req, res) => {
     success: true,
     message: 'Smart Campus API Server is running',
     healthCheck: '/api/v1/health',
+    databaseState: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
   });
 });
 
-// Health check
+// Health check with DB status
 app.get('/api/v1/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Smart Campus API is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'production',
+    databaseState: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    hasMongoUri: Boolean(process.env.MONGODB_URI),
   });
 });
 
 // Mount routes
-app.use('/api/v1/auth', authLimiter, authRoutes);
+app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/students', studentRoutes);
 app.use('/api/v1/teachers', teacherRoutes);
 app.use('/api/v1/classes', classRoutes);
